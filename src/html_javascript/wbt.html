@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Constant Wet Bulb Temperature Curves</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        #chartContainer {
+            width: 80%;
+            max-width: 1000px;
+            margin: 20px auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            /* Added height fix to prevent vertical squeezing */
+            height: 600px; 
+        }
+        .gui-container {
+            width: 80%;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .info {
+            margin-top: 15px;
+            font-size: 0.9em;
+            color: #555;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="gui-container">
+    <h1>Constant Wet Bulb Temperature Curves</h1>
+    <p>Adjust the parameters below to generate and plot the curves.</p>
+    <div id="gui"></div>
+</div>
+
+<div id="chartContainer">
+    <canvas id="wetBulbChart"></canvas>
+</div>
+
+<p class="info">
+</p>
+
+<script>
+    // --- 1. Wet Bulb Temperature Function (Conversion from Python code) ---
+    function getWetBulbTemp(T, RH) {
+        T = parseFloat(T);
+        RH = Math.max(0, parseFloat(RH)); // Ensure RH >= 0
+
+        const term1 = T * Math.atan(0.151977 * Math.sqrt(RH + 8.313659));
+        const term2 = Math.atan(T + RH);
+        const term3 = Math.atan(RH - 1.676331);
+        const term4 = 0.00391838 * Math.pow(RH, 1.5) * Math.atan(0.023101 * RH);
+        const term5 = 4.686035;
+        
+        return term1 + term2 - term3 + term4 - term5;
+    }
+
+    // --- 2. Newton's Method Solver (Equivalent to fsolve for a single variable) ---
+    function newtonsMethod(func, initialGuess) {
+        let x = initialGuess;
+        const maxIterations = 50;
+        const tolerance = 1e-6;
+        const delta = 1e-6; // for numerical derivative
+
+        for (let i = 0; i < maxIterations; i++) {
+            const f_x = func(x);
+
+            if (Math.abs(f_x) < tolerance) {
+                return x;
+            }
+
+            // Numerical derivative
+            const f_prime_x = (func(x + delta) - f_x) / delta;
+
+            if (Math.abs(f_prime_x) < 1e-10) {
+                return x; 
+            }
+
+            // Newton-Raphson formula
+            x = x - f_x / f_prime_x;
+        }
+
+        return x;
+    }
+
+    // --- 3. UI Controls and State ---
+    const guiControls = {
+        minT: 10,
+        maxT: 20,
+        minRH: 10,
+        maxRH: 60,
+        tempStep: 0.5,
+        targetTw: '7, 8, 9, 10, 11, 12',
+    };
+
+    let wetBulbChart; // Will hold the Chart.js instance
+
+    // --- 4. Main Plotting Logic ---
+    function generateAndPlotCurves() {
+        const { minT, maxT, minRH, maxRH, tempStep, targetTw } = guiControls;
+        const TARGET_TW_VALUES = targetTw.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        
+        // Prepare X-axis (Temperature array)
+        const temperatures = [];
+        for (let t = minT; t <= maxT; t += tempStep) {
+            temperatures.push(t);
+        }
+
+        const datasets = [];
+        const colors = [
+            'rgb(255, 99, 132)',  // Red
+            'rgb(54, 162, 235)',  // Blue
+            'rgb(255, 206, 86)',  // Yellow
+            'rgb(75, 192, 192)',  // Teal
+            'rgb(153, 102, 255)', // Purple
+            'rgb(255, 159, 64)',  // Orange
+            'rgb(199, 199, 199)', // Gray
+        ];
+        let colorIndex = 0;
+        
+        // --- Loop through each Target Tw ---
+        for (const target_tw of TARGET_TW_VALUES) {
+            const dataPoints = [];
+            let initialGuessRH = 50.0; 
+
+            for (const T of temperatures) {
+                // Closure to define the function for the solver: f(RH) = 0
+                const equationToSolve = (RH) => getWetBulbTemp(T, RH) - target_tw;
+
+                // Use the solver to find the RH root
+                let RH_solution = newtonsMethod(equationToSolve, initialGuessRH);
+                
+                // Clip and update guess for stability
+                RH_solution = Math.max(0, Math.min(100, RH_solution));
+                initialGuessRH = RH_solution; 
+
+                // Only plot points within the user-defined RH range
+                if (RH_solution >= minRH && RH_solution <= maxRH) {
+                    dataPoints.push({ x: T, y: RH_solution });
+                }
+            }
+
+            // Create Chart.js dataset
+            datasets.push({
+                label: `Tw = ${target_tw.toFixed(1)}°C`,
+                data: dataPoints,
+                borderColor: colors[colorIndex % colors.length],
+                tension: 0.4, 
+                fill: false,
+                pointRadius: 0, 
+                borderWidth: 2
+            });
+            colorIndex++;
+        }
+        
+        // --- Chart Configuration and Update ---
+        const ctx = document.getElementById('wetBulbChart').getContext('2d');
+
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'linear',
+                    position: 'bottom',
+                    title: { display: true, text: 'Air Temperature (°C)' },
+                    min: minT,
+                    max: maxT,
+                },
+                y: {
+                    type: 'linear',
+                    title: { display: true, text: 'Relative Humidity (%)' },
+                    min: minRH,
+                    max: maxRH,
+                }
+            },
+            plugins: {
+                legend: {
+                    title: { display: true, text: 'Target WBT (°C)' }
+                },
+                title: {
+                    display: true,
+                    text: 'Constant Wet Bulb Temperature Curves',
+                    font: { size: 16 }
+                }
+            }
+        };
+
+
+        if (wetBulbChart) {
+            wetBulbChart.data.datasets = datasets;
+            wetBulbChart.options.scales.x.min = minT;
+            wetBulbChart.options.scales.x.max = maxT;
+            wetBulbChart.options.scales.y.min = minRH;
+            wetBulbChart.options.scales.y.max = maxRH;
+            wetBulbChart.update();
+        } else {
+            wetBulbChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets: datasets },
+                options: chartOptions
+            });
+        }
+    }
+
+    window.onload = function() {
+        const gui = new dat.GUI({ autoPlace: false });
+        document.getElementById('gui').appendChild(gui.domElement);
+
+        // Group for Temperature Range
+        const tempFolder = gui.addFolder('Temperature (T) Range');
+        tempFolder.add(guiControls, 'minT').name('Min T (°C)').onChange(generateAndPlotCurves);
+        tempFolder.add(guiControls, 'maxT').name('Max T (°C)').onChange(generateAndPlotCurves);
+        tempFolder.add(guiControls, 'tempStep').name('T Step Size (°C)').onChange(generateAndPlotCurves);
+        tempFolder.open(); 
+
+        // Group for Humidity Range
+        const rhFolder = gui.addFolder('Relative Humidity (RH) Range');
+        rhFolder.add(guiControls, 'minRH').name('Min RH (%)').onChange(generateAndPlotCurves);
+        rhFolder.add(guiControls, 'maxRH').name('Max RH (%)').onChange(generateAndPlotCurves);
+        rhFolder.open(); 
+
+        // Group for Target WBT
+        const wbtFolder = gui.addFolder('Wet Bulb Temperature (Tw)');
+        wbtFolder.add(guiControls, 'targetTw').name('Target WBTs (e.g., 8, 10, 12)').onChange(generateAndPlotCurves);
+        wbtFolder.open();
+
+        // Initial plot generation
+        generateAndPlotCurves();
+    };
+
+</script>
+
+</body>
+</html>
