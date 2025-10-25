@@ -115,8 +115,8 @@ plt.ylim(10, 60)
 
 highlight_xmin = 15
 highlight_xmax = 17
-highlight_ymin_norm = 30 / 100.0  # Normalized y-start
-highlight_ymax_norm = 50 / 100.0  # Normalized y-end
+highlight_ymin_norm = 35 / 70.0  # Normalized y-start
+highlight_ymax_norm = 55 / 70.0  # Normalized y-end
 
 plt.axvspan(highlight_xmin, highlight_xmax,
             ymin=highlight_ymin_norm, ymax=highlight_ymax_norm,
